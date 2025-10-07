@@ -935,7 +935,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
     D[,,i] <- as.matrix(dist(X[,i], diag = TRUE, upper = TRUE))
   }
   maxranges <- apply(X, 2, function(x) max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
-  llgp <- function(D, y, theta, nug=0){
+  llgp <- function(D, y, theta, nug=0.0001){
     n <- length(y)
     if (theta >0 & nug >= 0){
       Sig <- covmat(D=D, ls=theta, nug = nug)
@@ -1177,7 +1177,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
     res_z[,j+1] <- z
     colnames(res_z)[j+1] <- paste('z',j,sep = '')
     
-    if(j%%1 == 10){
+    if(j%%10 == 0){
       print(paste("Iter",j,"done."))
     }
   }
@@ -1367,7 +1367,7 @@ imgpe.ddslc <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
     
     # Fit a GP to each cluster
     res_noise[,j+1] <- 0
-    
+    Qlist <- list()
     indexlist <- split(seq_along(z), z)
     fitslice <- function(zw){
       myllgp <- function(x){llgp(D=D[zw,zw,,drop=FALSE], y=y[zw], theta=x[1], nug=x[2])}
@@ -1393,6 +1393,9 @@ imgpe.ddslc <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
       zw <- indexlist[[i]]
       res_noise[zw,j+1] <- newGPparms[[i]][ndim+1]
       res_gp[i,] <- newGPparms[[i]]
+      Qlist[[i]] <- solve(covmat(D=D[zw,zw,,drop=FALSE], 
+                                 ls=newGPparms[[i]][-(ndim+1)], 
+                                 nug = newGPparms[[i]][ndim+1]))
     }
     
     colnames(res_noise)[j+1] <- paste('nug',j,sep = '')
@@ -1475,7 +1478,7 @@ imgpe.ddslc <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
     res_z[,j+1] <- z
     colnames(res_z)[j+1] <- paste('z',j,sep = '')
     
-    if(j%%1 == 10){
+    if(j%%10 == 0){
       print(paste("Iter",j,"done."))
     }
   }
@@ -1498,3 +1501,139 @@ imgpe.ddslc <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
   return(list('z'=res_z, 'gatepar'=res_gatepar, 'expertprior'=ab, 
               'noise'=res_noise, 'experts'=res_gp, 'draws'=res_posterior))
 }
+
+# DDCRP Clustering Algorithm
+ddcrp.gibbs <- function(dat, y, alpha, dist.fn, decay.fn, lhood.fn,
+                        niter, summary.fn = ncomp.summary,
+                        log.prior.thresh=-10,
+                        clust.traj=FALSE, cust.traj=FALSE)
+{
+  require(plyr)
+  ### set up summary statistics and trajectories
+  
+  ndata <- dim(dat)[1]
+  msg.inc <- 10^(floor(log10(dim(dat)[1]))-1)
+  if (clust.traj)
+    clust.traj <- matrix(NA, nrow=niter, ncol=ndata)
+  if (cust.traj)
+    cust.traj <- matrix(NA, nrow=niter, ncol=ndata)
+  score <- numeric(niter)
+  map.score <- 0
+  
+  ### set up initial state, summaries, and cluster likelihoods
+  
+  msg("setting up the initial state")
+  st <- data.frame(idx=1:ndata, cluster=1:ndata, customer=1:ndata)
+  lhood <- daply(st, .(cluster), function (df) lhood.fn(dat[df$idx,,drop=FALSE], y[df$idx]))
+  
+  summary <- summary.fn(dat, 0, st, lhood, alpha)
+  
+  ### run for niter iterations
+  
+  for (iter in 1:niter)
+  {
+    msg(sprintf("iter=%d", iter))
+    
+    iter.score <- 0
+    for (i in seq(2,ndata)) # note: index i = 1 is correct at the outset
+    {
+      #if ((i %% msg.inc) == 0) msg(sprintf("%04d", i))
+      
+      ### "remove" the i-th data point from the state
+      ### to do this, set its cluster to i, and set its connected data to i
+      
+      old.cluster <- st$cluster[i]
+      old.customer <- st$customer[i]
+      conn.i <- connections(i, st$customer)
+      st$cluster[conn.i] <- i
+      st$customer[i] <- i
+      
+      ### if this removal splits a table update the likelihoods.
+      ### note: splits only happen if c_i^{old} != i
+      
+      if (old.customer != i)
+      {
+        ### !!! do we need to use "idx"
+        old.idx <- st[which(st$cluster==old.cluster),"idx"]
+        lhood[char(old.cluster)] <- lhood.fn(dat[old.idx,,drop=FALSE], y[old.idx])
+      }
+      else
+      {
+        lhood[char(old.cluster)] <- 0
+      }
+      
+      ### compute the log prior
+      ### (this should be precomputed---see opt.ddcrp.gibbs below)
+      
+      log.prior <- sapply(1:ndata,
+                          function (j) safelog(decay.fn(dist.fn(dat[i,], dat[j,]))))
+      log.prior[i] <- log(alpha)
+      log.prior <- log.prior - log.sum(log.prior)
+      cand.links <- which(log.prior > log.prior.thresh)
+      
+      ### compute the likelihood of data point i (and its connectors)
+      ### with all other tables (!!! do we need to use "idx"?)
+      
+      cand.clusts <- unique(st$cluster[cand.links])
+      
+      new.lhood <- daply(subset(st, cluster %in% cand.clusts), .(cluster),
+                         function (df)
+                           lhood.fn(dat[unique(c(df$idx,st[conn.i,"idx"])),,drop=FALSE],
+                                    y[unique(c(df$idx,st[conn.i,"idx"]))]))
+      
+      if (length(new.lhood)==1) names(new.lhood) <- cand.clusts
+      
+      ### set up the old likelihoods
+      
+      old.lhood <- lhood[char(cand.clusts)]
+      sum.old.lhood <- sum(old.lhood)
+      
+      ### compute the conditional distribution
+      
+      log.prob <-
+        log.prior[cand.links] +
+        sapply(cand.links,
+               function (j) {
+                 c.j <- char(st$cluster[j])
+                 sum.old.lhood - old.lhood[c.j] + new.lhood[c.j] })
+      
+      ### sample from the distribution
+      
+      prob <- exp(log.prob - log.sum(log.prob))
+      if (length(prob)==1)
+        st$customer[i] <- cand.links[1]
+      else
+        st$customer[i] <- sample(cand.links, 1, prob=prob)
+      
+      ### update the score with the prior and update the clusters
+      
+      iter.score <- iter.score + log.prior[st$customer[i]]
+      st$cluster[conn.i] <- st$cluster[st$customer[i]]
+      clust.i.idx <- subset(st, cluster == st$cluster[i])$idx
+      lhood[char(st$cluster[i])] <- lhood.fn(dat[clust.i.idx,,drop=FALSE], y[clust.i.idx])
+    }
+    
+    ### update the summary
+    
+    iter.score <- iter.score + sum(lhood)
+    score[iter] <- iter.score
+    if ((score[iter] > map.score) || (iter==1))
+    {
+      map.score <- score[iter]
+      map.state <- st
+    }
+    summary <- rbind(summary, summary.fn(dat, iter, st, lhood, alpha))
+    if (!is.null(dim(cust.traj))) cust.traj[iter,] <- st$customer
+    if (!is.null(dim(clust.traj))) clust.traj[iter,] <- st$cluster
+  }
+  
+  ### return everything
+  
+  list(summary=summary, cust.traj=cust.traj, clust.traj=clust.traj, score=score,
+       map.score = map.score, map.state = map.state)
+}
+
+library(plyr)
+#ddc1phi01 <- ddcrp.gibbs(as.matrix(simdat[,1]), simdat$y, 1, 
+#                       dist.fn = euc, decay.fn = gaus.k, 
+#                       lhood.fn = lhoodgp, niter = 100)

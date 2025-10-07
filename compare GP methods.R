@@ -148,6 +148,16 @@ comparemods <- function(z, X, y, Xtest){
               'clust.var'=list('mle'=var_opt, 'stan'=var_brm,  'slice'=var_slc)))
 }
 
+lhoodgp <- function(Xdat, y){
+  N <- nrow(Xdat)
+  if (N==0) { return(0) }
+  D <- array(0, dim = c(N,N,ncol(Xdat)))
+  for (i in 1:ncol(Xdat)) {
+    D[,,i] <- as.matrix(dist(Xdat[,i], diag = TRUE, upper = TRUE))
+  }
+  llgp(D, y, theta=1)
+}
+
 library(brms)
 library(laGP)
 library(qslice)
@@ -179,3 +189,4 @@ ggplot(data = predc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
   geom_line(aes(y=c9), linetype=2, col="magenta", size=1.2) + 
   geom_line(aes(y=c10), linetype=2, col="brown", size=1.2) +
   xlab('X') + ylab('Y') + ggtitle('GP Predictions from Ten Experts')
+
