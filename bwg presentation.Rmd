@@ -1,0 +1,80 @@
+---
+title: "Non-Exchangeable Priors for Bayesian Nonparametric Models"
+author: "AJ Phillips"
+date: "2025-11-11"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Outline
+
+- Traditional non-parametric priors: Dirichlet Process, Chinese Restaurant Process, Pitman-Yor Process, Indian Buffet
+
+- Exchangeability vs Dependence
+
+- Construction of an NP prior in 3 steps
+
+- How dependence can be added in any of the three steps
+
+- What type of dependence is captured by each approach
+
+- The trade-offs involved in each approach
+
+- Conclusions
+
+## Traditional Nonparametric Priors
+
+- Dirichlet Process
+
+- Chinese Restaurant Process
+
+- Indian Buffet Process
+
+- Pitman-Yor Process
+
+## Exchangeability vs Dependence
+
+- All these priors assume that your data is exchangeable.
+
+- That is, the order of the observations doesn't affect the model.
+
+- But spatial or temporal data is generally non-exchangeable!
+
+- Observing 3 and then 5 is different from observing 5 and then 3.
+
+- More details.
+
+## Design of NP Prior: De Finetti's Theorem
+
+- De Finetti's Theorem: Any infinite exchangeable sequence $Y_1, Y_2,\dots$ can be expressed as a mixture of iid samples where $Q_{\theta}$ is a family of conditional distributions and $P$ is a distribution over $\Theta$ called the de Finetti mixing measure.
+
+- $$\mathbb{P}(Y_1,Y_2,\dots, Y_n)= \int \prod_{i=1}^n Q_{\theta}(Y_i) P(d\theta)$$
+
+- Developing Bayesian nonparametric models over exchangeable data thus takes two steps:
+
+- Construction of a distribution over countably infinite measures over $\Theta$ (the de Finetti mixing measure).
+
+- Choice of the conditional distribution family $Q_{\theta}$ (the observation generating mechanism).
+
+- Integrate out the De Finetti measure and work directly with the predictive distributions $p(Y_{n+1} | Y_1 \dots Y_n)$.
+
+- Each of these steps provide opportunities for injecting dependence.
+
+## De Finetti Mixing Measure
+
+The de Finetti measure is a discrete measure characterized by the size and location of its atoms.  Usually, it can be described by a mechanism $f$ for generating a countable number of atom sizes and an independent mechanism $g$ for generating corresponding locations.  Then a measure $G$ is generated as
+
+$$\Pi := \pi_1, \pi_2, … \sim f$$
+$$\theta_k \sim^{iid} g$$    
+$$G=\sum_{k=1}^{\infty} \pi_k \delta_{\theta_k}$$
+
+A common choice for $f$ is the stick breaking construction.
+
+$$\pi_k = V_k \prod_{j=1}^{k-1}(1-V_j)$$
+$$V_k\sim \text{Beta}(a_k,b_k)$$
+
+Proper choices of $a$ and $b$ can represent the Dirichlet process ($a_k=1,b_k=\alpha$) and the Pitman-Yor process ($a_k=1-a, b_k=b+ka$).
+

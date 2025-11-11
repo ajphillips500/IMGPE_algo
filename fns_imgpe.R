@@ -135,27 +135,48 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
   require(numDeriv)
   
   N <- nrow(X)
+  d <- ncol(X)
+  dq <- ifelse(is.null(Xq), 0, ncol(Xq))
   alpha <- ifelse(!is.null(parms), parms[1], 0.01*N)
   if (!is.null(parms)){
     phi <- parms[-1]
   } else {
-    phi <- rep(1, ncol(X))
+    phi <- rep(1, d+dq)
   }
   ab <- c(darg(NULL, X)$ab, garg(NULL, y)$ab)
   if(sum(ab[(length(ab)-1):length(ab)])==0){
     ab[(length(ab)-1):length(ab)] <- c(1, 1)
   }
-  z <- ifelse(is.null(z_init), rep(1,N), z_init)
+  z <- z_init
+  if(is.null(z)){z <- rep(1,N)}
   n_k <- as.vector(table(z))
   Nclust <- length(n_k)
-  D <- array(0, dim = c(N,N,ncol(X)))
-  for (i in 1:ncol(X)) {
+  D <- array(0, dim = c(N,N,d+dq))
+  for (i in 1:d) {
     D[,,i] <- as.matrix(dist(X[,i], diag = T, upper = T))
   }
+  if (!is.null(Xq)){
+    for (i in 1:dq) {
+      Di <- as.matrix(cluster::daisy(Xq[,i,drop=FALSE], metric = "gower"))
+      Di[Di > 0] <- 1
+      D[,,d+i] <- Di
+    }
+  }
   if (!is.null(Xpred)){
-    Dpred <- array(0, dim = c(nrow(Xpred),N,ncol(X)))
-    for (i in 1:ncol(X)){
-      Dpred[,,i] <- as.matrix(distance(Xpred, X))
+    Dpred <- array(0, dim = c(nrow(Xpred),N,d+dq))
+    for (i in 1:d){
+      Dpred[,,i] <- as.matrix(distance(Xpred[,1:d], X))
+    }
+    if (!is.null(Xq)) {
+      for (i in 1:dq){
+        Di <- matrix(0, nrow = nrow(Xpred), ncol = N)
+        for (A in 1:nrow(Xpred)){
+          for (B in 1:N) {
+            Di[A,B] <- ifelse(Xpred[A,d+i]==Xq[B,i], 0, 1)
+          }
+        }
+        Dpred[,,d+i] <- Di
+      }
     }
   }
   Qlist <- list()
@@ -164,7 +185,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
   # prepare results
   res_gatepar <- data.frame(matrix(c(alpha, phi), nrow=1))
   colnames(res_gatepar) <- c("alpha", colnames(X), colnames(Xq))
-  res_z <- data.frame(z0=z_init)
+  res_z <- data.frame(z0=z)
   res_gp <- data.frame()
   res_noise <- data.frame('nug0'=rep(0,N))
   res_spvar <- data.frame('spv0'=rep(0,N))
@@ -208,7 +229,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
             break
           }
           pars <- as.numeric(res_gp[1,-ncol(res_gp)])
-          Qy <- drop(covmat(D=D, set1 = i, set2 = z_k,
+          Qy <- drop(covmat(D=D[,,1:d,drop=FALSE], set1 = i, set2 = z_k,
                             ls = pars))
           #print(paste('zk:',length(z_k),'Qy:',length(Qy),'Qlist:',nrow(Qlist[[k]])))
           mu <- t(Qy)%*%(Qlist[[k]])%*%y[z_k]
@@ -249,7 +270,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
       z[i] <- newz
       if (length(Qlist) >= newz){
         parms <- drop(as.matrix(res_gp[newz,]))
-        cmatnew <- covmat(D=D, set1 = which(z==newz), set2 = which(z==newz),
+        cmatnew <- covmat(D=D[,,1:d,drop=FALSE], set1 = which(z==newz), set2 = which(z==newz),
                           ls=parms[-length(parms)], nug=parms[length(parms)])
         Qlist[[newz]] <- solve(cmatnew + diag(1e-9, nrow = nrow(cmatnew),
                                               ncol = nrow(cmatnew)))
@@ -260,7 +281,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
     # Fit a GP to each cluster
     invisible(capture.output(g <- deleteGPseps()))
     Qlist <- list()
-    res_gp <- data.frame(matrix(ncol = length(phi)+1))  
+    res_gp <- data.frame(matrix(ncol = d+1))  
     for (i in 1:Nclust) {
       dat_i <- X[z==i,,drop=FALSE]
       response_i <- y[z==i]
@@ -275,7 +296,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
         out
       })
       if (class(mle_i) == "list"){
-        cvm <- covmat(D=D, set1 = which(z==i), set2 = which(z==i),
+        cvm <- covmat(D=D[,,1:d,drop=FALSE], set1 = which(z==i), set2 = which(z==i),
                       ls=mle_i$theta[-length(mle_i$theta)], 
                       nug = mle_i$theta[length(mle_i$theta)])
         Qlist[[i]] <- solve(cvm + diag(1e-9, nrow = sum(z==i), ncol = sum(z==i)))
@@ -295,7 +316,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
       finalpreds <- c()
       bestpreds <- c()
       for(k in 1:Nclust){
-        pred <- predGPsep(k-1, Xpred, lite = TRUE)
+        pred <- predGPsep(k-1, Xpred[,1:d,drop=FALSE], lite = TRUE)
         predsbyc[,k] <- pred$mean
       }
       for(i in 1:nrow(C)){
@@ -327,16 +348,18 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
     proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
                          error=function(msg){ alpha })
     alpha <- ifelse(is.finite(proposal), proposal, alpha)
+    setTimeLimit(elapsed = Inf, transient = FALSE)
     
     # Sample phi
     prop_cmat <- hessian(logpost_phi, x=phi, alpha=alpha, z=z, D=D, lp=FALSE)
     prop_cmat <- ifelse(is.finite(prop_cmat), prop_cmat, 0)
-    sdphi <- (2.38^2/length(phi))*abs(solve(prop_cmat + diag(1e-9, length(phi), length(phi))))
+    sdphi <- (2.38^2/(d+dq))*abs(solve(prop_cmat + diag(1e-9, d+dq, d+dq)))
     for(k in 1:ncol(sdphi)){
       sdphi[k,k] <- min(maxranges[k], sdphi[k,k])
       sdphi[k,k] <- max(1e-5, sdphi[k,k])
     }
-    proposal <- rep(-1, length(phi))
+    sdphi <- ifelse(is.na(sdphi), 1, sdphi)
+    proposal <- rep(-1, d+dq)
     while(!(all(proposal > 0))){proposal <- mvtnorm::rmvnorm(1, phi, as.matrix(sdphi))}
     aprob <- logpost_phi(proposal, alpha=alpha, z = z, D = D) -
       logpost_phi(phi = phi, alpha = alpha, z = z, D = D)
@@ -360,7 +383,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
     colnames(res_noise)[j+1] <- paste('nug',j,sep = '')
     colnames(res_spvar)[j+1] <- paste('spv',j,sep='')
     
-    if(j%%100 == 0){
+    if(j%%10 == 0){
       print(paste("Iter",j,"done."))
     }
   }
@@ -398,7 +421,8 @@ imgpe.stan <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
     phi <- rep(1, ncol(X))
   }
   ab <- c(1,1,1,1)
-  z <- ifelse(is.null(z_init), rep(1,N), z_init)
+  z <- z_init
+  if(is.null(z)){z <- rep(1,N)}
   n_k <- as.vector(table(z))
   Nclust <- length(n_k)
   D <- array(0, dim = c(N,N,ncol(X)))
@@ -411,7 +435,7 @@ imgpe.stan <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
   # prepare results
   res_gatepar <- data.frame(matrix(c(alpha, phi), nrow=1))
   colnames(res_gatepar) <- c("alpha", colnames(X), colnames(Xq))
-  res_z <- data.frame(z0=z_init)
+  res_z <- data.frame(z0=z)
   res_gp <- data.frame()
   res_noise <- data.frame('nug0'=rep(0,N))
   res_spvar <- data.frame('spv0'=rep(0,N))
@@ -656,8 +680,9 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
   } else {
     phi <- rep(1, ncol(X))
   }
-  ab <- c(0,1,0,1)
-  z <- ifelse(is.null(z_init), rep(1,N), z_init)
+  ab <- rep(1, (ndim+1)*2)
+  z <- z_init
+  if(is.null(z)){z <- rep(1,N)}
   n_k <- as.vector(table(z))
   Nclust <- length(n_k)
   D <- array(0, dim = c(N,N,ncol(X)))
@@ -687,7 +712,7 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
   # prepare results
   res_gatepar <- data.frame(matrix(c(alpha, phi), nrow=1))
   colnames(res_gatepar) <- c("alpha", colnames(X), colnames(Xq))
-  res_z <- data.frame(z0=z_init)
+  res_z <- data.frame(z0=z)
   res_gp <- data.frame()
   res_noise <- data.frame('nug0'=rep(0,N))
   #res_spvar <- data.frame('spv0'=rep(0,N))
@@ -749,7 +774,7 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
         } else {
           nug <- 0
           for (M in 1:(length(ab)/2)) {
-            nug <- nug + rgamma(1, ab[2*M-1], ab[2*M])
+            nug <- nug + rinvgamma(1, ab[2*M-1], ab[2*M])
           }
           lcondprob <- dnorm(y[i], mean = 0, sd = sqrt(nug), log = TRUE)
         }
@@ -937,7 +962,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
   maxranges <- apply(X, 2, function(x) max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
   llgp <- function(D, y, theta, nug=0.0001){
     n <- length(y)
-    if (theta >0 & nug >= 0){
+    if (all(theta >0) & nug >= 0){
       Sig <- covmat(D=D, ls=theta, nug = nug)
       dsig <- as.numeric(determinant(Sig)[1])
       prtheta <- sum(dgamma(theta, 1, 1, log = TRUE))
@@ -966,7 +991,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
     }
     dd <- array(0, dim = c(nrow(Xpred),N,ncol(X)))
     for (i in 1:ncol(X)) {
-      dd[,,i] <- sqrt(laGP::distance(Xpred, X))
+      dd[,,i] <- sqrt(laGP::distance(Xpred[,i], X[,i]))
     }
     res_drawmu <- data.frame('start'=rep(0,nrow(Xpred)))
   }
@@ -1006,7 +1031,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
       {
         old.idx <- st[which(st$cluster==old.cluster),"idx"]
         lhood[as.character(old.cluster)] <- llgp(D[old.idx,old.idx,,drop=FALSE], y[old.idx], 
-                                                 theta = res_gp[old.cluster,-(ndim+1)],
+                                                 theta = unlist(res_gp[old.cluster,-(ndim+1)]),
                                                  nug = res_gp[old.cluster, ndim+1])
       }
       else
@@ -1028,7 +1053,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
         df <- st[st$cluster == cand.clusts[k],]
         pts <- unique(c(df$idx,st[conn.i,"idx"]))
         new.lhood[k] <- llgp(D[pts,pts,,drop=FALSE], y[pts],
-                             theta = res_gp[cand.clusts[k],-(ndim+1)],
+                             theta = unlist(res_gp[cand.clusts[k],-(ndim+1)]),
                              nug = res_gp[cand.clusts[k], ndim+1])
       }
       
@@ -1063,7 +1088,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
       clus_i <- st$cluster[i]
       res_gp[pts_i,] <- as.list(res_gp[st$customer[i],])
       lhood[as.character(st$cluster[i])] <- llgp(D[pts_i,pts_i,,drop=FALSE], y[pts_i],
-                                                 theta = res_gp[clus_i,-(ndim+1)],
+                                                 theta = unlist(res_gp[clus_i,-(ndim+1)]),
                                                  nug = res_gp[clus_i, ndim+1])
     }
     #update Nclust, n_k, z
@@ -1125,17 +1150,19 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
     }
     
     # Sample alpha
-    lalpha <- function(x){ out <- logpost_alpha(alpha = x, N=N, k=Nclust)
-    out <- ifelse(!is.finite(out), -1000, out)
-    return(out)}
-    pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
-                 q = function(x) qgamma(x,1,1))
-    setTimeLimit(elapsed = 5, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
-    proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
-                         error=function(msg){ alpha })
-    alpha <- ifelse(is.finite(proposal), proposal, alpha)
-    setTimeLimit(elapsed = Inf, transient = TRUE)
+    if (TRUE) {
+      lalpha <- function(x){ out <- logpost_alpha(alpha = x, N=N, k=Nclust)
+      out <- ifelse(!is.finite(out), -1000, out)
+      return(out)}
+      pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
+                   q = function(x) qgamma(x,1,1))
+      setTimeLimit(elapsed = 5, transient = TRUE)
+      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
+      proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
+                           error=function(msg){ alpha })
+      alpha <- ifelse(is.finite(proposal), proposal, alpha)
+      setTimeLimit(elapsed = Inf, transient = TRUE)
+    }
     
     # Sample phi
     logpost_phi <- function(phi, D=D, z=z, alpha=alpha, Xq=NULL, lp=TRUE){
@@ -1157,20 +1184,22 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
       return(step4)
     }
     
-    prop_cmat <- hessian(logpost_phi, x=phi, D=D, z=z, alpha=alpha, lp=FALSE)
-    prop_cmat <- ifelse(!is.finite(prop_cmat), 0, prop_cmat)
-    sdphi <- (2.38^2/length(phi))*abs(solve(prop_cmat + diag(1e-9, length(phi), length(phi))))
-    for(k in 1:ncol(sdphi)){
-      sdphi[k,k] <- min(maxranges[k], sdphi[k,k])
-      sdphi[k,k] <- max(1e-5, sdphi[k,k])
+    if (TRUE) {
+      prop_cmat <- hessian(logpost_phi, x=phi, D=D, z=z, alpha=alpha, lp=FALSE)
+      prop_cmat <- ifelse(!is.finite(prop_cmat), 0, prop_cmat)
+      sdphi <- (2.38^2/length(phi))*abs(solve(prop_cmat + diag(1e-9, length(phi), length(phi))))
+      for(k in 1:ncol(sdphi)){
+        sdphi[k,k] <- min(maxranges[k], sdphi[k,k])
+        sdphi[k,k] <- max(1e-5, sdphi[k,k])
+      }
+      proposal <- rep(-1, length(phi))
+      while(!(all(proposal > 0))){proposal <- mvtnorm::rmvnorm(1, phi, as.matrix(sdphi))}
+      aprob <- logpost_phi(proposal, alpha=alpha, z = z, D = D) -
+        logpost_phi(phi = phi, alpha = alpha, z = z, D = D)
+      u <- runif(1)
+      aprob <- ifelse(is.nan(aprob), -Inf, ifelse(is.infinite(aprob),-Inf,aprob))
+      if(u < exp(aprob)){ phi = proposal }
     }
-    proposal <- rep(-1, length(phi))
-    while(!(all(proposal > 0))){proposal <- mvtnorm::rmvnorm(1, phi, as.matrix(sdphi))}
-    aprob <- logpost_phi(proposal, alpha=alpha, z = z, D = D) -
-      logpost_phi(phi = phi, alpha = alpha, z = z, D = D)
-    u <- runif(1)
-    aprob <- ifelse(is.nan(aprob), -Inf, ifelse(is.infinite(aprob),-Inf,aprob))
-    if(u < exp(aprob)){ phi = proposal }
     
     # Record results
     res_gatepar[j+1,] <- c(alpha, phi)
@@ -1187,7 +1216,7 @@ imgpe.ddem <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=
   clusts <- unique(z)
   for (i in clusts) {
     zi <- which(z==i)
-    Kinv <- solve(covmat(D[zi,zi,,drop=FALSE], ls=res_gp[i,-ncol(res_gp)],
+    Kinv <- solve(covmat(D[zi,zi,,drop=FALSE], ls=unlist(res_gp[i,-ncol(res_gp)]),
                          nug = res_gp[i,ncol(res_gp)]))
     tau2 <- drop(t(y[z==i])%*%Kinv%*%y[z==i])/sum(z==i)
     spv <- c(spv, tau2)
@@ -1633,7 +1662,6 @@ ddcrp.gibbs <- function(dat, y, alpha, dist.fn, decay.fn, lhood.fn,
        map.score = map.score, map.state = map.state)
 }
 
-library(plyr)
-#ddc1phi01 <- ddcrp.gibbs(as.matrix(simdat[,1]), simdat$y, 1, 
-#                       dist.fn = euc, decay.fn = gaus.k, 
-#                       lhood.fn = lhoodgp, niter = 100)
+ddmv <- imgpe.ddem(X=as.matrix(simmvar[,1:5]), y=simmvar$y, Xpred = Xtest, maxIters = 20)
+set.seed(102925)
+x1 <- runif(150,0,5)

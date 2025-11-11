@@ -190,3 +190,26 @@ ggplot(data = predc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
   geom_line(aes(y=c10), linetype=2, col="brown", size=1.2) +
   xlab('X') + ylab('Y') + ggtitle('GP Predictions from Ten Experts')
 
+pred3 <- test2$draws
+meandist <- data.frame('x'=Xtest[,1], 'true'=y1, 'mean'=rowMeans(pred1))
+ggplot(data = meandist, aes(x=x)) + geom_line(aes(y=true), col="blue") +
+  geom_line(aes(y=mean), col="red") + geom_point(data = simdat, aes(x=x,y=y)) +
+  xlab('X') + ylab('Y') + ggtitle('Estimated Mean of Simulated Data #1')
+
+alphalist <- 1
+for (i in 2:10000) {
+  alp <- alpha[i-1]
+  lalpha <- function(x){ out <- logpost_alpha(alpha = x, N=100, k=40)
+  out <- ifelse(!is.finite(out), -1000, out)
+  return(out)}
+  pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
+               q = function(x) qgamma(x,1,1))
+  setTimeLimit(elapsed = 5, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
+  proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
+                       error=function(msg){ alpha })
+  alpha <- ifelse(is.finite(proposal), proposal, alpha)
+  setTimeLimit(elapsed = Inf, transient = FALSE)
+  alphalist <- c(alphalist, alpha)
+}
+
