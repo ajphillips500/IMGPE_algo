@@ -1,9 +1,9 @@
-comparemods <- function(z, X, y, Xtest){
-  alpha=2.291052
-  phi=1.5  #2.369451
+comparemods <- function(z, X, y, Xtest, zpar=c(1,1)){
+  alpha=zpar[1] #2.291052
+  phi=zpar[2]  #2.369451
   Nclust <- length(unique(z))
   N <- length(z)
-  parm_all <- data.frame('t1'=0,'nug1'=0,'t2'=0,'nug2'=0,'t3'=0,'nug3'=0)
+  parm_all <- data.frame('t1'=0,'nug1'=0,'t2'=0,'nug2'=0)
   sigM <- SigM <- matrix(c(2,0,0,2), nrow = 2)
   D <- array(0, dim = c(N,N,ncol(X)))
   for (i in 1:ncol(X)) {
@@ -35,12 +35,12 @@ comparemods <- function(z, X, y, Xtest){
   }
   
   datdf <- data.frame('x'=as.numeric(X), 'y'=y)
-  suppressMessages(suppressWarnings({
-    precomp <- brm(y~gp(x, scale=FALSE), data = datdf, 
-                   prior = c(prior(constant(0), class=Intercept), 
-                             prior(inv_gamma(1,1), class=lscale, coef=gpx), 
-                             prior(inv_gamma(1,1), class=sdgp)), 
-                   chains = 1, iter = 500, silent = 2, refresh = 0)}))
+  #suppressMessages(suppressWarnings({
+  #  precomp <- brm(y~gp(x, scale=FALSE), data = datdf, 
+  #                 prior = c(prior(constant(0), class=Intercept), 
+  #                           prior(inv_gamma(1,1), class=lscale, coef=gpx), 
+  #                           prior(inv_gamma(1,1), class=sdgp)), 
+  #                 chains = 1, iter = 500, silent = 2, refresh = 0)}))
   newmods <- list()
   
   for (i in 1:Nclust) {
@@ -65,9 +65,9 @@ comparemods <- function(z, X, y, Xtest){
     setTimeLimit(elapsed = Inf, transient = TRUE)
     sliceparm_i <- colMeans(draws[501:1000,])
     
-    newmods[[i]] <- update(precomp, newdata = datdf[zi,])
-    brmparm_i <- posterior_summary(newmods[[i]])
-    brmparm_i <- brmparm_i[2:3,1]
+    #newmods[[i]] <- update(precomp, newdata = datdf[zi,])
+    #brmparm_i <- posterior_summary(newmods[[i]])
+    #brmparm_i <- brmparm_i[2:3,1]
     
     gp_i <- newGPsep(dat_i, y_i, d=7.84, g=0.081, dK = TRUE)
     mle_i <- tryCatch({
@@ -83,34 +83,34 @@ comparemods <- function(z, X, y, Xtest){
       mle_i <- as.vector(mle_i$theta)
     }
     
-    parm_all[i,] <- c(mle_i, brmparm_i, sliceparm_i)
+    parm_all[i,] <- c(mle_i, sliceparm_i)
   }
   
   # Prediction Section
   C <- exp(-rowSums((dd^2)/rep(phi, each=nrow(Xtest)*N), dims = 2)) #changed Dpred to dd
   predsbyc_opt <- matrix(nrow=nrow(C), ncol = Nclust)
-  predsbyc_brm <- matrix(nrow=nrow(C), ncol = Nclust)
+  #predsbyc_brm <- matrix(nrow=nrow(C), ncol = Nclust)
   predsbyc_slc <- matrix(nrow=nrow(C), ncol = Nclust)
   var_opt <- matrix(nrow = nrow(C), ncol = Nclust)
-  var_brm <- matrix(nrow = nrow(C), ncol = Nclust)
+  #var_brm <- matrix(nrow = nrow(C), ncol = Nclust)
   var_slc <- matrix(nrow = nrow(C), ncol = Nclust)
   probsbyc <- matrix(nrow = nrow(C), ncol = Nclust)
   mlepreds <- c()
-  brmpreds <- c()
+  #brmpreds <- c()
   slcpreds <- c()
   mlebestpreds <- c()
-  brmbestpreds <- c()
+  #brmbestpreds <- c()
   slcbestpreds <- c()
   
   for(k in 1:Nclust){
     opt_i <- predGPsep(k-1, Xtest, lite = TRUE)
     predsbyc_opt[,k] <- opt_i$mean
     var_opt[,k] <- opt_i$s2
-    brm_i <- fitted(newmods[[k]], data.frame('x'=as.numeric(Xtest)))
-    predsbyc_brm[,k] <- brm_i[,1]
-    var_brm[,k] <- brm_i[,2]^2
+    #brm_i <- fitted(newmods[[k]], data.frame('x'=as.numeric(Xtest)))
+    #predsbyc_brm[,k] <- brm_i[,1]
+    #var_brm[,k] <- brm_i[,2]^2
     z_k <- which(z==k)
-    pars <- as.numeric(parm_all[k,5:6])
+    pars <- as.numeric(parm_all[k,3:4])
     Kinv <- solve(covmat(D=D[z_k,z_k,,drop=FALSE], 
                          ls=pars[-length(pars)], 
                          nug = pars[length(pars)]))
@@ -133,19 +133,20 @@ comparemods <- function(z, X, y, Xtest){
     probs <- exp(logp)/sum(exp(logp))
     probsbyc[i,] <- probs
     mlepreds <- c(mlepreds, sum(predsbyc_opt[i,]*probs))
-    brmpreds <- c(brmpreds, sum(predsbyc_brm[i,]*probs))
+    #brmpreds <- c(brmpreds, sum(predsbyc_brm[i,]*probs))
     slcpreds <- c(slcpreds, sum(predsbyc_slc[i,]*probs))
     mlebestpreds <- c(mlebestpreds, predsbyc_opt[i,which.max(probs)])
-    brmbestpreds <- c(brmbestpreds, predsbyc_brm[i,which.max(probs)])
+    #brmbestpreds <- c(brmbestpreds, predsbyc_brm[i,which.max(probs)])
     slcbestpreds <- c(slcbestpreds, predsbyc_slc[i,which.max(probs)])
   }
   
-  preds_all <- data.frame('mle_pred'=mlepreds, 'STAN_pred'=brmpreds,
+  preds_all <- data.frame('mle_pred'=mlepreds, #'STAN_pred'=brmpreds,
                           'slice_pred'=slcpreds, 'mle_best'=mlebestpreds,
-                          'STAN_best'=brmbestpreds, 'slice_best'=slcbestpreds)
+                          #'STAN_best'=brmbestpreds, 
+                          'slice_best'=slcbestpreds)
   return(list('GPparms'=parm_all, 'ests'=preds_all, 'probs'=probsbyc, 'clust.ests'=
-                list('mle'=predsbyc_opt, 'stan'=predsbyc_brm, 'slice'=predsbyc_slc),
-              'clust.var'=list('mle'=var_opt, 'stan'=var_brm,  'slice'=var_slc)))
+                list('mle'=predsbyc_opt, 'slice'=predsbyc_slc),
+              'clust.var'=list('mle'=var_opt,  'slice'=var_slc)))
 }
 
 lhoodgp <- function(Xdat, y){
@@ -162,21 +163,22 @@ library(brms)
 library(laGP)
 library(qslice)
 library(invgamma)
-cmp1 <- comparemods(z=slc_basic1$z$z200, X=simX, y=simdat$y,
-                    Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
-cmp2 <- comparemods(z=rep(1,100), X=simX, y=simdat$y,
-                    Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
-cmp8 <- comparemods(z=rep(1:10,each=10)[order(order(as.numeric(simX)))], X=simX, y=simdat$y,
-                    Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
+cmp1 <- comparemods(z=rep(1:10,each=10)[order(order(as.numeric(simX)))], X=simX, y=simdat$y,
+                    par = c(1,1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
+cmp2 <- comparemods(z=rep(1:10,each=10), X=simX, y=simdat$y,
+                    par = c(1,1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
+cmp4 <- comparemods(z=zz, X=simX, y=simdat$y, par = c(1,1), Xtest = Xtest)
 
-preds <- cmp8$ests
+preds <- cmp3b$ests
 preds$x <- seq(0.01,5,by=0.01)
 preds$true <- sapply(seq(0.01,5,by=0.01), simfn)
-ggplot(data = preds, aes(x=x)) + geom_line(aes(y=true), col="black") +
-  geom_line(aes(y=mle_pred), col="green") + geom_line(aes(y=STAN_pred), col="blue") +
+p6 <- ggplot(data = preds, aes(x=x)) + geom_line(aes(y=true), col="black") +
+  geom_line(aes(y=mle_pred), col="green") + #geom_line(aes(y=STAN_pred), col="blue") +
   geom_line(aes(y=slice_pred), col="red") + xlab('X') + ylab('Y') +
-  geom_point(data = simdat, aes(x=x,y=y)) +
-  ggtitle('GP Comparison with Reduced Phi')
+  geom_point(data = simdat, aes(x=x,y=y, shape = grp2)) +
+  scale_shape_manual(values = c('1'=1,'2'=2,'3'=3,'4'=4,'5'=5,'6'=6,'7'=7,'8'=8,'9'=9,'10'=11)) +
+  theme(legend.position = "none") +
+  ggtitle('Random Clusters, Phi=10')
 ggplot(data = predc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
   geom_line(aes(y=c1), linetype=2, col="red", size=1.2) + 
   geom_line(aes(y=c2), linetype=2, col="orange", size=1.2) +
@@ -211,5 +213,13 @@ for (i in 2:10000) {
   alpha <- ifelse(is.finite(proposal), proposal, alpha)
   setTimeLimit(elapsed = Inf, transient = FALSE)
   alphalist <- c(alphalist, alpha)
+}
+
+# Generate many iMGPE data sets with constant alpha, phi, theta
+ivals <- sample(1000:10000, 100)
+for (i in ivals) {
+  datgen <- gendat(seed = i, X=simX, alp = 1, phi = 1.5, gpparm = c(1,0.04,1))
+  datgen <- append(datgen, list('seed'=i))
+  #saveRDS(datgen, file = paste0('/folder/gen_data_',i,'.rds'))
 }
 

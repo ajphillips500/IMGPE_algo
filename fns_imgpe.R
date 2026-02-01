@@ -8,6 +8,25 @@ logpost_alpha <- function(alpha, N, k){
   return(value)
 }
 
+# log posterior for alpha, MCRP
+lp_alpha <- function(alpha, z, C){
+  n <- length(z)
+  sumlp <- 0
+  for (i in 1:n) {
+    if(i==1){ zprime=c(-1,z[-1]) } else {
+      zprime <- c(1:(i-1),-1,z[-c(1:i)])
+    }
+    if(sum(zprime==z[i])==0){
+      sumlp <- sumlp + log(alpha)
+    } else {
+      numerator <- log(sum(C[z[i],which(zprime==z[i])]))
+      denom <- log(sum(C[z[i],-z[i]]))
+      sumlp <- sumlp +numerator - denom
+    }
+  }
+  return(sumlp - n*log(n+alpha-1))
+}
+
 # log posterior for phi (approximate)
 logpost_phi <- function(phi, alpha, z, D, Xq=NULL, lp=TRUE){
   n <- length(z)
@@ -122,6 +141,67 @@ connections <- function(i, links)
     }
   }
   visited
+}
+
+# Generate Data from IMGPE Model
+##############################################
+
+gendat <- function(seed=12345, X, alp=NULL, phi=NULL, z=NULL, gpparm=NULL){
+  require(MASS)
+  set.seed(seed)
+  # Generate phi and alpha from priors
+  if(is.null(alp)){ alpha <- invgamma::rinvgamma(1, 1, 1) }
+  if(is.null(phi)){ phi <- rlnorm(1) }
+  # Generate z from phi, alpha
+  D <- as.matrix(dist(X, diag = TRUE, upper = TRUE))
+  C <- exp(-D^2/phi)
+  if (is.null(z)){
+    z <- rep(1,nrow(X))
+    clusters <- c()
+    for (i in 2:nrow(X)) {
+      n <- i-1
+      zi <- z[1:n]
+      nclust <- length(unique(zi))
+      probs <- c()
+      for (j in 1:nclust) {
+        newprob <- log(n-1) - log(n-1+alpha) + 
+          log(sum(C[i, which(zi==j)])) - log(sum(C[i,zi]))
+        probs <- c(probs, newprob)
+      }
+      probs <- c(probs, log(alpha)-log(n-1+alpha))
+      probs <- exp(probs)
+      newi <- sample(1:(nclust+1), size = 1, prob = probs)
+      z[i] <- newi
+    }
+  }
+  
+  # Generate theta from prior for each cluster
+  nclust <- length(unique(z))
+  theta <- matrix(0, nrow = nclust, ncol = 3)
+  if (is.null(gpparm)){
+    for (i in 1:nclust) {
+      theta[i,] <- c(rgamma(1,1,1), rgamma(1,1,10), 1)
+    }
+  } else {
+    for (i in 1:nclust) {
+      theta[i,] <- gpparm
+    }
+  }
+  # Generate y from theta, z
+  # Generate y for all X per cluster
+  DD <- array(data = D, dim = c(nrow(D), ncol(D), 1))
+  #Sig <- matrix(0, nrow = nrow(D), ncol = nrow(D))
+  y <- rep(0, nrow(D))
+  for(j in 1:nclust) {
+    Sigj <- covmat(DD, ls=theta[i,1], nug = theta[i,2])
+    Sigj <- Sigj*theta[i,3]
+    #Sig[which(z==j), which(z==j)] <- Sigj
+    yj <- as.vector(mvrnorm(n=1, mu = rep(0,length(z)), Sigma = Sigj))
+    y[which(z==j)] <- yj[which(z==j)]
+  }
+  #y <- mvtnorm::rmvnorm(1, mean = rep(0,nrow(D)), sigma = Sig)
+  
+  return(list('X'=X, 'alpha'=alpha, 'phi'=phi, 'z'=z, 'theta'=theta, 'y'=y))
 }
 
 # IMGPE MCMC Fitting Functions
@@ -249,7 +329,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
       }
       
       M <- length(ab)
-      logp[Nclust+1] <- dnorm(y[i], sd=sqrt(rgamma(1, ab[M-1], ab[M])), log = TRUE) +
+      logp[Nclust+1] <- dnorm(y[i], 0, sd=sqrt(rgamma(1, ab[M-1], ab[M])), log = TRUE) +
         log(alpha) - log(nrow(X)-1+alpha)
       floor <- min(logp[is.finite(logp)],1e-9)
       logp <- ifelse(!is.finite(logp), floor, logp)
@@ -338,7 +418,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
     }
     
     # Sample alpha
-    lalpha <- function(x){ out <- logpost_alpha(alpha = x, N=N, k=Nclust)
+    lalpha <- function(x){ out <- logpost_alpha(alpha = 2*x, N=N, k=Nclust)
     out <- ifelse(!is.finite(out), -1000, out)
     return(out)}
     pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
@@ -347,7 +427,7 @@ imgpe.em <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred=NU
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
     proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
                          error=function(msg){ alpha })
-    alpha <- ifelse(is.finite(proposal), proposal, alpha)
+    alpha <- ifelse(is.finite(proposal), proposal/2, alpha)
     setTimeLimit(elapsed = Inf, transient = FALSE)
     
     # Sample phi
@@ -782,7 +862,7 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
       }
       
       M <- length(ab)
-      logp[Nclust+1] <- dnorm(y[i], sd=sqrt(rinvgamma(1, ab[M-1], ab[M])), log = TRUE) +
+      logp[Nclust+1] <- dnorm(y[i], 0, sd=sqrt(rinvgamma(1, ab[M-1], ab[M])), log = TRUE) +
         log(alpha) - log(nrow(X)-1+alpha)
       floor <- min(logp[is.finite(logp)],1e-9)
       logp <- ifelse(!is.finite(logp), floor, logp)
@@ -880,17 +960,19 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
     }
     
     # Sample alpha
-    lalpha <- function(x){ out <- logpost_alpha(alpha = x, N=N, k=Nclust)
-    out <- ifelse(!is.finite(out), -1000, out)
-    return(out)}
-    pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
-                 q = function(x) qgamma(x,1,1))
-    setTimeLimit(elapsed = 5, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
-    proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
-                         error=function(msg){ alpha })
-    alpha <- ifelse(is.finite(proposal), proposal, alpha)
-    setTimeLimit(elapsed = Inf, transient = TRUE)
+    if(FALSE){
+      lalpha <- function(x){ out <- logpost_alpha(alpha = 2*x, N=N, k=Nclust)
+      out <- ifelse(!is.finite(out), -1000, out)
+      return(out)}
+      pseu <- list(ld = function(x) dgamma(x,1,1,log = TRUE), 
+                   q = function(x) qgamma(x,1,1))
+      setTimeLimit(elapsed = 5, transient = TRUE)
+      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
+      proposal <- tryCatch({ slice_quantile(alpha, lalpha, pseudo = pseu)$x}, 
+                           error=function(msg){ alpha })
+      alpha <- ifelse(is.finite(proposal), proposal, alpha)
+      setTimeLimit(elapsed = Inf, transient = TRUE)
+    }
     
     # Sample phi
     prop_cmat <- hessian(logpost_phi, x=phi, alpha=alpha, z=z, D=D, lp=FALSE)
@@ -1662,6 +1744,6 @@ ddcrp.gibbs <- function(dat, y, alpha, dist.fn, decay.fn, lhood.fn,
        map.score = map.score, map.state = map.state)
 }
 
-ddmv <- imgpe.ddem(X=as.matrix(simmvar[,1:5]), y=simmvar$y, Xpred = Xtest, maxIters = 20)
+slc.fixa <- imgpe.slice(X=simX, y=simdat$y, draw = 5, Xpred = Xtest, maxIters = 3000)
 set.seed(102925)
 x1 <- runif(150,0,5)

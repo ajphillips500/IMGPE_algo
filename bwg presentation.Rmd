@@ -2,58 +2,58 @@
 title: "Non-Exchangeable Priors for Bayesian Nonparametric Models"
 author: "AJ Phillips"
 date: "2025-11-11"
-output: ioslides_presentation
+output:
+  ioslides_presentation: default
+  slidy_presentation: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-## Outline
+## Introduction
 
-- Traditional non-parametric priors: Dirichlet Process, Chinese Restaurant Process, Pitman-Yor Process, Indian Buffet
+Suppose you are working with an infinite mixture model. You will need a prior on the mixture probabilities, such as a Dirichlet process.
+
+Suppose you have covariate data that should probably inform how the data is partitioned. But none of the standard mixture priors allow for dependence.
+
+What dependent methods are available and how do you pick the right one? The authors Nicholas Foti, Sinead Williamson, et al have some ideas.
+
+- "A Survey of Non-Exchangeable Priors for Bayesian Nonparametric Models" IEEE 2013.
+
+## Outline
 
 - Exchangeability vs Dependence
 
-- Construction of an NP prior in 3 steps
+- Construction of an NP prior in 3 stages
 
-- How dependence can be added in any of the three steps
+- Traditional non-parametric priors: Dirichlet Process, Chinese Restaurant Process, Pitman-Yor Process, Indian Buffet
+
+- How dependence can be added in any of the three stages
 
 - What type of dependence is captured by each approach
 
-- The trade-offs involved in each approach
+- Considerations in selecting an approach
 
 - Conclusions
 
-## Traditional Nonparametric Priors
+## Exchangeable vs Non-Exchangeable
 
-- Dirichlet Process
+Priors constructed by Bayesian nonparametric processes generally assume that your data is exchangeable. That is, the joint distribution of the data is symmetric for any finite permutation of the indices. 
 
-- Chinese Restaurant Process
+But we frequently work with spatial or temporal data, which is non-exchangeable!
 
-- Indian Buffet Process
-
-- Pitman-Yor Process
-
-## Exchangeability vs Dependence
-
-- All these priors assume that your data is exchangeable.
-
-- That is, the order of the observations doesn't affect the model.
-
-- But spatial or temporal data is generally non-exchangeable!
-
-- Observing 3 and then 5 is different from observing 5 and then 3.
-
-- More details.
+- Observing $(X_1=0,X_2=3,X_3=8)$ is different from observing $(X_1=8,X_2=0,X_3=3)$
 
 ## Design of NP Prior: De Finetti's Theorem
 
-- De Finetti's Theorem: Any infinite exchangeable sequence $Y_1, Y_2,\dots$ can be expressed as a mixture of iid samples where $Q_{\theta}$ is a family of conditional distributions and $P$ is a distribution over $\Theta$ called the de Finetti mixing measure.
+De Finetti's Theorem: Any infinite exchangeable sequence $Y_1, Y_2,\dots$ can be expressed as a mixture of iid samples where $Q_{\theta}$ is a family of conditional distributions and $P$ is a distribution over $\Theta$ called the de Finetti mixing measure.
 
-- $$\mathbb{P}(Y_1,Y_2,\dots, Y_n)= \int \prod_{i=1}^n Q_{\theta}(Y_i) P(d\theta)$$
+$$\mathbb{P}(Y_1,Y_2,\dots, Y_n)= \int \prod_{i=1}^n Q_{\theta}(Y_i) P(d\theta)$$
 
-- Developing Bayesian nonparametric models over exchangeable data thus takes two steps:
+## Design of NP Prior: De Finetti's Theorem
+
+Developing Bayesian nonparametric priors over exchangeable data thus takes two steps:
 
 - Construction of a distribution over countably infinite measures over $\Theta$ (the de Finetti mixing measure).
 
@@ -61,20 +61,157 @@ knitr::opts_chunk$set(echo = FALSE)
 
 - Integrate out the De Finetti measure and work directly with the predictive distributions $p(Y_{n+1} | Y_1 \dots Y_n)$.
 
-- Each of these steps provide opportunities for injecting dependence.
+Each of these steps provide opportunities for injecting dependence.
 
 ## De Finetti Mixing Measure
 
 The de Finetti measure is a discrete measure characterized by the size and location of its atoms.  Usually, it can be described by a mechanism $f$ for generating a countable number of atom sizes and an independent mechanism $g$ for generating corresponding locations.  Then a measure $G$ is generated as
 
 $$\Pi := \pi_1, \pi_2, … \sim f$$
-$$\theta_k \sim^{iid} g$$    
+$$\theta_k \sim^{iid} g$$  
 $$G=\sum_{k=1}^{\infty} \pi_k \delta_{\theta_k}$$
+
+## Stick Breaking Construction
 
 A common choice for $f$ is the stick breaking construction.
 
 $$\pi_k = V_k \prod_{j=1}^{k-1}(1-V_j)$$
 $$V_k\sim \text{Beta}(a_k,b_k)$$
 
-Proper choices of $a$ and $b$ can represent the Dirichlet process ($a_k=1,b_k=\alpha$) and the Pitman-Yor process ($a_k=1-a, b_k=b+ka$).
+Proper choices of $a_k$ and $b_k$ can represent the Dirichlet process $(a_k=1,b_k=\alpha)$ and the Pitman-Yor process $(a_k=1-a, b_k=b+ka)$.
 
+## OGM and Predictive Distribution
+
+Once we have chosen a de Finetti mixing measure, we select a family of conditional likelihoods to describe the distribution of $Y|\theta$. This family is generally chosen to be conjugate to the de Finetti measure. 
+
+- Given a Dirichlet process, we can choose a multinomial distribution to get a distribution over exchangeable clusterings or partitions.
+
+- Given a gamma process, we can choose a Poisson distribution to get a distribution over exchangeable sequences of integers.
+
+If we have conjugacy between the de Finetti measure and the observation generating mechanism, then we can generally obtain the predictive distribution $p(Y_i|Y_1,\dots,Y_{i-1})$ analytically.
+
+## Traditional Nonparametric Priors
+
+- Dirichlet Process: realizations are discrete probability distributions.
+
+- Chinese Restaurant Process: realizations are random partitions over data.
+
+- Indian Buffet Process: realizations are sparse binary matrices with finite rows and infinite columns
+
+- Pitman-Yor Process: realizations are probability distributions. An additional parameter gives more flexibility over the tail behavior.
+
+## Method 1: Dependence in Atom Sizes
+
+The first category of approaches is to generate the atom sizes from a covariate dependent distribution.
+
+$$\Pi= \pi_1,\pi_2,\dots \sim f|X$$
+
+This approach allows you to model situations where the proportions of the latent variables vary across the covariate space.
+
+## Method 1: Graphical Representation
+
+```{r out.width="90%"}
+knitr::include_graphics("C:/Users/ajphi/OneDrive/Documents/plot2_bwg.png")
+```
+
+Here, $\theta$ stays the same for different covariate values while $\pi$ changes.
+
+## Method 1: Kernel Stick-Breaking Process
+
+The kernel stick-breaking process, devised by D. B. Bunson and J. H. Park, modifies the regular stick-breaking process with a kernel function $K:\mathbb{X}\times \mathbb{X}\to [0,1]$ to define
+
+$$\pi_k^{(x)}=V_kK(x,\mu_k)\prod_{j=1}^{k-1}(1-V_j)K(x,\mu_j)$$
+
+where $V_k\sim \text{Beta}(a_k,b_k)$ and $\mu_k\in \mathbb{X}$ are random covariate locations for the sticks.
+
+While the resulting process is no longer marginally Dirichlet, it is not hard to perform inference through MCMC or variational inference.
+
+## Method 2: Dependence in Atom Locations
+
+The second approach is to generate the atom locations from a covariate dependent distribution.
+
+$$\theta_k \sim^{iid} g|X$$
+
+This allows us to model situations where the values of some parameters are expected to change with the covariates.
+
+## Method 2: Graphical Representation
+
+```{r out.width="90%"}
+knitr::include_graphics("C:/Users/ajphi/OneDrive/Documents/plot1_bwg.png")
+```
+
+## Method 2: Spatial Dirichlet Process
+
+One example of this is the spatial Dirichlet process proposed by Gelfand et al. They use a Dirichlet process to simulate the atom sizes and treat each location $\theta_k$ as a realization of a random field. For example, the base measure of the DP could be a stationary Gaussian process and the $\theta_{k,D}$ would be realizations of the GP over a set of covariate locations $D$. Each replicate set of observations over $D$ is considered to have come from a distinct random field.
+
+$$\Pi:= (\pi_1,\pi_2,\dots) \sim \text{Stick}(1,\alpha),\text{ } \theta_{k,D}\sim GP(0,V)$$
+
+The resulting random stochastic process is non-stationary and non-Gaussian, allowing the Spatial Dirichlet Process to accommodate subtler relationships with its covariate information.
+
+## Method 3: Dependence in the OGM
+
+We can also introduce dependence through the observation generating mechanism $Q_\theta$. Recall that this is a conditional distribution of our observations $Y$ parameterized by a finite vector $\theta$ generated by the de Finetti mixing measure.
+
+Many methods in this category utilize smooth latent surfaces to select mixture components, which enforces a locally similar clustering structure.
+
+## Method 3: Generalized Spatial DP
+
+The generalized spatial DP by Gelfand et al. extends the spatial DP so that a single observation of all locations can be represented by different surfaces at different locations. Given $\Pi:= (\pi_1,\pi_2,\dots) \sim \text{Stick}(1,\alpha)$, we draw a set of correlated samples $(Z_n^{(x)}: x\in \mathbb{X})$ and select a field for each location $x\in \mathbb{X}$.
+
+Let $Z_i, i=1,2,\dots$ be independent Gaussian random fields with unit variance and mean functions $m_i(\cdot)$ such that
+
+$$\Phi(m_i(x))\sim^{iid} \text{Beta}(1,\alpha)$$
+
+Then for each $x\in\mathbb{X}$, we define $Z_n(x)=\max Z_i(x)$ and $Y_n(x)=\theta_{Z_n(x)}(x)$.
+
+## Method 4: Dependence in the Predictive Distribution
+
+Lastly, we can add dependence by manipulating the predictive distribution $p(X_{n+1}|X_1,\dots, X_n)$. This allows us to model situations where we expect observations to be similar to observations at nearby covariates. There are two general approaches here.
+
+- Given a sequence of observations that arrive over time in batches, create Markov chains of CRPs that incorporate a subset of observations from the previous time into the current CRP. (GPU-DDP by Caron, Davy, and Doucet)
+
+- Modify the predictive distribution directly to depend on a covariate or function thereof.
+
+## Method 4: Distance-Dependent CRP
+
+An example of the second approach is the Distance Dependent Chinese Restaurant Process described by Blei and Frazier. This method defines a dissimilarity measure between observations $i$ and $j$ denoted as $d_{ij}$ and a decay function $f(\cdot)$ that is monotonically decreasing. Each new point is assigned to a previous point, or to itself, with probability
+
+$$p(c_i=j|D,\alpha) \propto\begin{cases} f(d_{ij})\text{ if }i\neq j\\
+\alpha \text{ if } i=j
+\end{cases}$$
+
+## Choosing a Dependent Process
+
+The first consideration is what kind of dependence you are trying to capture.
+
+- If the values of some parameters are expected to change with a covariate, then the locations of the de Finetti mixture measure can be made dependent while its weights are held constant. 
+
+- If you expect the proportions of the latent components to vary across the covariate space, then holding the locations fixed while the weights are made dependent is appropriate. 
+
+- If you expect that observations will be similar to observations at nearby covariates, then introducing dependence through the marginal distributions or the predictive distributions is the best way to accomplish this.
+
+## Other Considerations
+
+- What is the nature of your covariate space? In particular, is it ordered such as with time?
+
+- Is there prior information about the form of the marginal distributions?
+
+- Is your primary goal prediction, or inference on parameters, or identification of trends?
+
+## Conclusions
+
+The field of dependent nonparametric processes remains highly active and more methods have likely been developed since its publication.
+
+This paper was quite helpful in my own research and I hope it will be in yours as well.
+
+## References
+
+N. J. Foti and S. A. Williamson, "A Survey of Non-Exchangeable Priors for Bayesian Nonparametric Models," in IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 37, no. 2, pp. 359-371, Feb. 2015 https://ieeexplore.ieee.org/document/6654119
+
+D. B. Dunson and J.-H. Park, “Kernel stick-breaking processes,” Biometrika, vol. 95, no. 2, pp. 307–323, 2008. https://pmc.ncbi.nlm.nih.gov/articles/PMC2538628
+
+A. E. Gelfand, A. Kottas, and S. N. MacEachern, “Bayesian nonparametric spatial modelling with Dirichlet process mixing,” J. Amer. Statist. Assoc., vol. 100, no. 471, pp. 1021–1035, 2005.
+
+A. Duan, M. Guindani, and A. E. Gelfand, “Generalized spatial Dirichlet process models,” Biometrika, vol. 94, no. 4, pp. 809–825, 2007.
+
+D. M. Blei and P. I. Frazier, “Distance dependent Chinese restaurant processes,” J. Mach. Learn. Res., vol. 12, pp. 2461–2488, Aug. 2011.
