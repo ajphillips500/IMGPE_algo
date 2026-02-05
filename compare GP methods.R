@@ -4,7 +4,7 @@ comparemods <- function(z, X, y, Xtest, zpar=c(1,1)){
   Nclust <- length(unique(z))
   N <- length(z)
   parm_all <- data.frame('t1'=0,'nug1'=0,'t2'=0,'nug2'=0)
-  sigM <- SigM <- matrix(c(2,0,0,2), nrow = 2)
+  sigM <- SigM <- matrix(c(5,0,0,2), nrow = 2)
   D <- array(0, dim = c(N,N,ncol(X)))
   for (i in 1:ncol(X)) {
     D[,,i] <- as.matrix(dist(X[,i], diag = TRUE, upper = TRUE))
@@ -43,32 +43,44 @@ comparemods <- function(z, X, y, Xtest, zpar=c(1,1)){
   #                 chains = 1, iter = 500, silent = 2, refresh = 0)}))
   newmods <- list()
   
+  slice.t <- c()
   for (i in 1:Nclust) {
     zi <- which(z==i)
     dat_i <- X[z==i,,drop=FALSE]
     y_i <- y[z==i]
     
+    # Slice Sampler
+    
     myllgp <- function(x){llgp(D=D[zi,zi,,drop=FALSE], y=y[zi], theta=x[1], nug=x[2])}
-    draws <- matrix(c(1,0.1), nrow = 1000, ncol = 2, byrow = T)
-    for (k in 2:1000) {
-      setTimeLimit(elapsed = 0.1, transient = TRUE)
-      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
-      
-      #tryCatch({slice_elliptical_mv(x = draws[k-1,], log_target=myllgp, 
-      #                              mu=c(2,1), Sig = SigM)$x},
-      #         error=function(msg){ print(msg) }) 
-      drawk <- tryCatch({slice_elliptical_mv(x = draws[k-1,], log_target=myllgp, 
-                                             mu=c(2,1), Sig = SigM)$x},
-                        error=function(msg){ draws[k-1,] }) 
-      draws[k,] <- ifelse(drawk>0, drawk, 0.001)
+    draws <- matrix(c(1,0.1), nrow = 1, ncol = 2, byrow = T)
+    conv <- FALSE
+    t <- 0
+    while (t < 5) {
+      for (k in (500*t+1):(500*t+500)) {
+        setTimeLimit(elapsed = 0.1, transient = TRUE)
+        on.exit(setTimeLimit(elapsed = Inf, transient = FALSE))
+        drawk <- tryCatch({slice_elliptical_mv(x = draws[k,], log_target=myllgp, 
+                                               mu=c(2,1), Sig = SigM)$x},
+                          error=function(msg){ draws[k,] }) 
+        setTimeLimit(elapsed = Inf, transient = TRUE)
+        draws <- rbind(draws, as.numeric(ifelse(drawk>0, drawk, 0.001)))
+      }
+      # test convergence
+      w <- nrow(draws)
+      gwd1 <- LaplacesDemon::Geweke.Diagnostic(draws[(w-499):w,1])
+      gwd2 <- LaplacesDemon::Geweke.Diagnostic(draws[(w-499):w,2])
+      conv <- abs(gwd1) < 1.95996 & abs(gwd2) < 1.95996
+      t <- t+1
     }
-    setTimeLimit(elapsed = Inf, transient = TRUE)
-    sliceparm_i <- colMeans(draws[501:1000,])
+    
+    sliceparm_i <- colMeans(draws[floor(w/2):w,])
+    slice.t <- c(slice.t, t)
     
     #newmods[[i]] <- update(precomp, newdata = datdf[zi,])
     #brmparm_i <- posterior_summary(newmods[[i]])
     #brmparm_i <- brmparm_i[2:3,1]
     
+    # MLE GP fit
     gp_i <- newGPsep(dat_i, y_i, d=7.84, g=0.081, dK = TRUE)
     mle_i <- tryCatch({
       mleGPsep(gp_i, param = "both", ab = c(1,1,1,1), tmax = c(500,500))
@@ -144,8 +156,8 @@ comparemods <- function(z, X, y, Xtest, zpar=c(1,1)){
                           'slice_pred'=slcpreds, 'mle_best'=mlebestpreds,
                           #'STAN_best'=brmbestpreds, 
                           'slice_best'=slcbestpreds)
-  return(list('GPparms'=parm_all, 'ests'=preds_all, 'probs'=probsbyc, 'clust.ests'=
-                list('mle'=predsbyc_opt, 'slice'=predsbyc_slc),
+  return(list('GPparms'=parm_all, 'ests'=preds_all, 'probs'=probsbyc, 'slct'=slice.t,
+              'clust.ests'= list('mle'=predsbyc_opt, 'slice'=predsbyc_slc),
               'clust.var'=list('mle'=var_opt,  'slice'=var_slc)))
 }
 
@@ -163,23 +175,23 @@ library(brms)
 library(laGP)
 library(qslice)
 library(invgamma)
-cmp1 <- comparemods(z=rep(1:10,each=10)[order(order(as.numeric(simX)))], X=simX, y=simdat$y,
-                    par = c(1,1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
+cmp7 <- comparemods(z=rep(1:10,each=10)[order(order(as.numeric(simX)))], X=simX, y=simdat$y,
+                    zpar = c(1,0.1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
 cmp2 <- comparemods(z=rep(1:10,each=10), X=simX, y=simdat$y,
-                    par = c(1,1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
-cmp4 <- comparemods(z=zz, X=simX, y=simdat$y, par = c(1,1), Xtest = Xtest)
+                    zpar = c(1,1), Xtest = matrix(seq(0.01,5,by=0.01),nrow = 500))
+cmp8 <- comparemods(z=zz, X=simX, y=simdat$y, zpar = c(1,0.1), Xtest = Xtest)
 
 preds <- cmp3b$ests
 preds$x <- seq(0.01,5,by=0.01)
 preds$true <- sapply(seq(0.01,5,by=0.01), simfn)
-p6 <- ggplot(data = preds, aes(x=x)) + geom_line(aes(y=true), col="black") +
+ggplot(data = preds, aes(x=x)) + geom_line(aes(y=true), col="black") +
   geom_line(aes(y=mle_pred), col="green") + #geom_line(aes(y=STAN_pred), col="blue") +
   geom_line(aes(y=slice_pred), col="red") + xlab('X') + ylab('Y') +
   geom_point(data = simdat, aes(x=x,y=y, shape = grp2)) +
   scale_shape_manual(values = c('1'=1,'2'=2,'3'=3,'4'=4,'5'=5,'6'=6,'7'=7,'8'=8,'9'=9,'10'=11)) +
   theme(legend.position = "none") +
   ggtitle('Random Clusters, Phi=10')
-ggplot(data = predc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
+ggplot(data = mixslc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
   geom_line(aes(y=c1), linetype=2, col="red", size=1.2) + 
   geom_line(aes(y=c2), linetype=2, col="orange", size=1.2) +
   geom_line(aes(y=c3), linetype=2, col="yellow", size=1.2) + 
@@ -190,7 +202,32 @@ ggplot(data = predc, aes(x=x)) + geom_line(aes(y=true), col="black", size=1.2) +
   geom_line(aes(y=c8), linetype=2, col="purple", size=1.2) +
   geom_line(aes(y=c9), linetype=2, col="magenta", size=1.2) + 
   geom_line(aes(y=c10), linetype=2, col="brown", size=1.2) +
-  xlab('X') + ylab('Y') + ggtitle('GP Predictions from Ten Experts')
+  xlab('X') + ylab('Y') + ggtitle('Mixed Clusters, Slice Experts')
+
+foo <- as.data.frame(cmp8$probs)
+foo$x <- 1:500/100
+foo$V21 <- foo$V1+foo$V2
+foo$V32 <- foo$V21 + foo$V3
+foo$V43 <- foo$V32+foo$V4
+foo$V54 <- foo$V43+foo$V5
+foo$V65 <- foo$V54+foo$V6
+foo$V76 <- foo$V65+foo$V7
+foo$V87 <- foo$V76+foo$V8
+foo$V98 <- foo$V87+foo$V9
+foo$V109 <- foo$V98+foo$V10
+p4 <- ggplot(data = foo, aes(x=x))+ geom_ribbon(aes(ymin = 0,ymax = V1,fill = colors()[33])) + 
+  geom_ribbon(aes(ymin = V1, ymax = V21, fill = colors()[53])) + 
+  geom_ribbon(aes(ymin = V21,ymax = V32,fill = colors()[142])) + 
+  geom_ribbon(aes(ymin = V32, ymax = V43, fill = colors()[254])) + 
+  geom_ribbon(aes(ymin = V43,ymax = V54,fill = colors()[258])) + 
+  geom_ribbon(aes(ymin = V54, ymax = V65, fill = colors()[430])) + 
+  geom_ribbon(aes(ymin = V65,ymax = V76,fill = colors()[461])) + 
+  geom_ribbon(aes(ymin = V76, ymax = V87, fill = colors()[462])) + 
+  geom_ribbon(aes(ymin = V87,ymax = V98,fill = colors()[510])) + 
+  geom_ribbon(aes(ymin = V98, ymax = V109, fill = colors()[567])) + 
+  scale_fill_identity(name = 'Cluster', guide = "legend", 
+                      labels=c('1','2','3','4','5','6','7','8','9','10')) + 
+  xlab('X') + ylab('Weight') + ggtitle('Mixed Experts, Phi=0.1')
 
 pred3 <- test2$draws
 meandist <- data.frame('x'=Xtest[,1], 'true'=y1, 'mean'=rowMeans(pred1))

@@ -771,17 +771,15 @@ imgpe.slice <- function(X, Xq=NULL, y, parms=NULL, z_init=NULL, draw = 10, Xpred
   }
   Qlist <- list()
   maxranges <- apply(X, 2, function(x) max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
-  llgp <- function(D, y, theta, nug){
+  llgp <- function(D, y, theta, spvar=1, nug){
     n <- length(y)
+    mu <- mean(y)
     if (theta >0 & nug >= 0){
-      Sig <- covmat(D=D, ls=theta, nug = nug)
+      Sig <- covmat(D=D, ls=theta, nug = nug)*spvar
       dsig <- as.numeric(determinant(Sig)[1])
-      prtheta <- 0
-      for (i in 1:length(theta)) {
-        prtheta <- prtheta + dinvgamma(theta[i], 1, 1, log = TRUE)
-      }
+      prtheta <- sum(dinvgamma(theta, 1, 1, log = TRUE))
       prnug <- ifelse(nug==0, 0, dinvgamma(nug, 1, 1, log = TRUE))
-      out <- (n/2)*log(2*pi) + (n/2)*dsig + 0.5*t(y)%*%solve(Sig)%*%y - prtheta - prnug
+      out <- (n/2)*log(2*pi) + (1/2)*log(dsig) + 0.5*t(y-mu)%*%solve(Sig)%*%(y-mu) - prtheta - prnug
     } else {
       out <- 0
     }
